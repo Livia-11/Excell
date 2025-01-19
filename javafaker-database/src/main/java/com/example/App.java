@@ -6,80 +6,100 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 
 import com.github.javafaker.Faker;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 /**
- * description: This is a simple Java application that uses the JavaFaker library to generate fake data and insert it into a MySQL database.
- * It generates 10 million users with fake names, emails, and addresses, and inserts them into the 'users' table.
- * The application includes a progress indicator to show the number of users inserted.
- * @version 1.0
+ * description: Multithreaded Java application to insert 10 million fake users into a MySQL database.
+ * Uses JavaFaker for data generation and multithreading to optimize performance.
+ *
+ * @version 2.0
  * @author Livia
  * @since 2025-01-16
  * @see <a href="https://github.com/DiUS/java-faker">JavaFaker</a>
  * @license MIT
  */
 public class App {
+
+    // Total number of users to insert
+    private static final int TOTAL_USERS = 10_000_000;
+    // Number of threads to use for insertion
+    private static final int THREAD_COUNT = 10;
+    // Number of users each thread will handle
+    private static final int USERS_PER_THREAD = TOTAL_USERS / THREAD_COUNT;
+
+    // Database connection details
+    private static final String DB_URL = "jdbc:mysql://localhost:3306/users_db";
+    private static final String DB_USERNAME = "root";
+    private static final String DB_PASSWORD = "";
+
+    /**
+     * Main method to start the application.
+     * Divides the task of inserting users into multiple threads to reduce execution time.
+     *
+     * @param args Command-line arguments (not used).
+     */
     public static void main(String[] args) {
-        /**
-         * Faker is a library that generates fake data for testing and development purposes.
-         * It provides a wide range of data types, including names, addresses, phone numbers, and more.
-         * The Faker class is used to create instances of the Faker class, which can then be used to generate fake data.
-         * @see <a href="https://github.com/DiUS/java-faker">JavaFaker</a>
-         */
+        System.out.println("Starting multithreaded insertion...");
+        ExecutorService executorService = Executors.newFixedThreadPool(THREAD_COUNT);
+
+        for (int i = 0; i < THREAD_COUNT; i++) {
+            int threadId = i;
+            executorService.submit(() -> insertUsers(threadId));
+        }
+
+        executorService.shutdown();
+        while (!executorService.isTerminated()) {
+            // Wait for all threads to finish
+        }
+
+        System.out.println("All users have been inserted!");
+    }
+
+    /**
+     * Inserts a portion of the users into the database.
+     * Each thread runs this method independently.
+     *
+     * @param threadId Unique ID of the thread, used to calculate its data range.
+     */
+    private static void insertUsers(int threadId) {
         Faker faker = new Faker();
 
-        // Database connection details
-        /**
-         * url is the URL of the database.
-         * username is the username of the database.
-         * password is the password of the database.
-         */
-        String url = "jdbc:mysql://localhost:3306/users_db";
-        String username = "root";
-        String password = "";
-
-        try (Connection connection = DriverManager.getConnection(url, username, password)) {
-            // Prepare SQL statement to insert data
-            /**
-             * sql is the SQL statement to insert data into the database.
-             */
+        try (Connection connection = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
             String sql = "INSERT INTO users (first_name, last_name, email, address) VALUES (?, ?, ?, ?)";
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                /**
-                 * Generate and insert 10 million users
-                 */
-                for (int i = 0; i < 10_000_000; i++) {
+                int start = threadId * USERS_PER_THREAD;
+                int end = start + USERS_PER_THREAD;
+
+                for (int i = start; i < end; i++) {
                     String firstName = faker.name().firstName();
                     String lastName = faker.name().lastName();
                     String email = faker.internet().emailAddress();
                     String address = faker.address().fullAddress();
 
-                    // Set parameters and execute the insert
-                    /**
-                     * statement.setString(1, firstName);
-                     * statement.setString(2, lastName);
-                     * statement.setString(3, email);
-                     * statement.setString(4, address);
-                     * statement.executeUpdate();
-                     */
+                    // Set parameters for the insert query
                     statement.setString(1, firstName);
                     statement.setString(2, lastName);
                     statement.setString(3, email);
                     statement.setString(4, address);
-                    statement.executeUpdate();
-                    /**
-                     * Print progress every 1 million users
-                     */
-                    if (i % 1_000_000 == 0) {
-                        System.out.println("Inserted " + (i + 1) + " users");
+                    statement.addBatch(); // Add to batch
+
+                    // Execute batch every 1000 records
+                    if ((i + 1) % 1000 == 0) {
+                        statement.executeBatch();
+                    }
+
+                    // Log progress every 1 million users
+                    if ((i + 1) % 1_000_000 == 0) {
+                        System.out.println("Thread " + threadId + " inserted " + (i - start + 1) + " users");
                     }
                 }
+                // Execute remaining batch
+                statement.executeBatch();
             }
         } catch (SQLException e) {
-            /**
-             * Print error message
-             */
-            System.err.println("Database error occurred: " + e.getMessage());
-            // Or for more serious applications, use a logging framework:
-            // logger.error("Database error occurred", e);
+            System.err.println("Database error in thread " + threadId + ": " + e.getMessage());
         }
     }
 }
